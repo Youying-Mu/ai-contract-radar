@@ -1,0 +1,9 @@
+streamlit
+plotly
+pandas
+PyPDF2
+python-dotenv
+dashscope
+streamlit-authenticator
+bcrypt
+pyyaml
