@@ -1,3 +1,6 @@
+# 导入 RAG 模块
+from modules.rag import search_similar
+
 import os
 import streamlit as st
 from dotenv import load_dotenv
@@ -313,7 +316,26 @@ def gen_bar_chart(risk_points):
     )
     return fig
 
+# 【修改点】这是核心修改的函数
 def ai_contract_analysis(text):  # 用户已认证
+    # 第一步：从知识库检索相关条款
+    similar_clauses = []
+    try:
+        # 从合同中提取关键查询词（简单做法：取前200个字符作为查询）
+        query_text = text[:500]  # 用合同开头部分作为查询
+        similar_clauses = search_similar(query_text, top_k=3)
+        st.info(f"✅ 从知识库中找到 {len(similar_clauses)} 条相似条款作为参考")
+    except Exception as e:
+        st.warning(f"知识库检索失败，将继续仅用AI分析: {e}")
+        similar_clauses = []
+
+    # 第二步：构建带参考上下文的提示词
+    reference_text = ""
+    if similar_clauses:
+        reference_text = "以下是历史合同中的相似条款，请作为参考：\n"
+        for i, clause in enumerate(similar_clauses, 1):
+            reference_text += f"{i}. {clause['text']} (相似度: {clause['score']:.2f})\n"
+
     prompt = f"""你是一名合同风险分析专家。请严格按照如下JSON格式输出：
 {{
   "total_score": 整数 (0-100),
@@ -329,7 +351,13 @@ def ai_contract_analysis(text):  # 用户已认证
   }},
   "summary": "总体风险评估摘要"
 }}
-要求：high ≥70分, mid 40~69分, low ≤39分，风险点不宜过少，每个风险有专属reason。
+要求：
+1. high ≥70分, mid 40~69分, low ≤39分
+2. 风险点不宜过少，每个风险有专属reason
+3. 如果可能，参考相似历史条款进行对比分析
+
+{reference_text}
+
 合同内容如下：
 {text}
 """
@@ -346,8 +374,16 @@ def ai_contract_analysis(text):  # 用户已认证
         content = match.group(0)
     try:
         result = json.loads(content)
-    except Exception:
-        st.error("AI返回结果无法解析为JSON，请重试。")
+        # 第三步：将检索到的条款也存到结果中，用于显示
+        result['referenced_clauses'] = [
+            {
+                "text": c['text'],
+                "score": c['score'],
+                "metadata": c.get('metadata', {})
+            } for c in similar_clauses
+        ]
+    except Exception as e:
+        st.error(f"AI返回结果无法解析为JSON: {e}")
         return None
     return result
 
@@ -356,6 +392,13 @@ def get_report_txt(filename, result):
     lines.append(f"合同文件: {filename}")
     lines.append(f"风险总评分: {result['total_score']} 分")
     lines.append("维度分:\n" + "\n".join([f"- {k}: {v}分" for k, v in result['dimensions'].items()]))
+    
+    # 添加参考条款（如果有）
+    if result.get('referenced_clauses'):
+        lines.append("\n参考的历史相似条款：")
+        for idx, ref in enumerate(result['referenced_clauses'], 1):
+            lines.append(f"{idx}. {ref['text']} (相似度: {ref['score']:.2f})")
+    
     lines.append("\n详细风险点：")
     for idx, rp in enumerate(result['risk_points'], 1):
         lines.append(f"{idx}. 条款: {rp['clause']}\n   原因: {rp['reason']}\n   风险等级: {rp['severity']}")
@@ -437,6 +480,19 @@ def main():
                 "</div>",
                 unsafe_allow_html=True
             )
+        
+            # 添加参考条款展示
+    if result.get('referenced_clauses'):
+        st.subheader("📚 参考的历史相似条款")
+        for i, ref in enumerate(result['referenced_clauses'], 1):
+            st.markdown(
+                f"<div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:5px;'>"
+                f"<b>参考条款 {i}</b> (相似度: {ref['score']:.2f})<br>"
+                f"{ref['text']}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        
         st.subheader("AI总结")
         st.info(result.get("summary","无"))
 
