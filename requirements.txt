@@ -7,3 +7,4 @@ dashscope
 streamlit-authenticator
 bcrypt
 pyyaml
+pinecone
